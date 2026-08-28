@@ -145,6 +145,25 @@ public:
         return this->store_.static_delay_ms();
     }
 
+    bool save_security_private_key(const std::string& key) override {
+        return this->store_.set_security_private_key(key);
+    }
+    std::optional<std::string> load_security_private_key() override {
+        return this->store_.security_private_key();
+    }
+    bool save_pairing_psk(const std::string& psk) override {
+        return this->store_.set_pairing_psk(psk);
+    }
+    std::optional<std::string> load_pairing_psk() override {
+        return this->store_.pairing_psk();
+    }
+    std::vector<sendspin::SendspinPersistedPairingRecord> load_pairing_records() override {
+        return this->store_.pairing_records();
+    }
+    bool save_pairing_record(const std::string& server_id, const std::string& psk) override {
+        return this->store_.set_pairing_record(server_id, psk);
+    }
+
 private:
     StateStore& store_;
 };
@@ -838,6 +857,11 @@ int main(int argc, char* argv[]) {
     config.manufacturer = opts.manufacturer;
     config.software_version = SENDSPIN_CLI_VERSION;
     config.server_port = opts.port;
+    config.enable_security = true;
+    // Unpaired access is useful for player@v1 guest playback, but source@v1
+    // itself requires a paired/user-trust connection. A source-only endpoint
+    // therefore must not advertise unpaired access.
+    config.unpaired_access = opts.player_enabled;
 
     sendspin::SendspinClient client(std::move(config));
 
@@ -891,6 +915,10 @@ int main(int argc, char* argv[]) {
         if (!client.start_server()) {
             log_fatal(LOG_TAG, "could not start the Sendspin server on port %u", opts.port);
             return 1;
+        }
+        const std::string pairing_token = client.get_pairing_token();
+        if (!pairing_token.empty()) {
+            log_line(LogLevel::INFO, "pairing", "Pairing token: %s", pairing_token.c_str());
         }
         cli_log(LogLevel::INFO,
                 "sendspin-cli %s listening on port %u as \"%s\" "
@@ -1033,6 +1061,10 @@ int main(int argc, char* argv[]) {
     if (!client.start_server()) {
         log_fatal(LOG_TAG, "could not start the Sendspin server on port %u", opts.port);
         return 1;
+    }
+    const std::string pairing_token = client.get_pairing_token();
+    if (!pairing_token.empty()) {
+        log_line(LogLevel::INFO, "pairing", "Pairing token: %s", pairing_token.c_str());
     }
 
     cli_log(LogLevel::INFO,

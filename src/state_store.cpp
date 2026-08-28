@@ -39,6 +39,9 @@ constexpr const char* KEY_LAST_SERVER_HASH = "last-server-hash";
 constexpr const char* KEY_STATIC_DELAY_MS = "static-delay-ms";
 constexpr const char* KEY_VOLUME = "volume";
 constexpr const char* KEY_MUTED = "muted";
+constexpr const char* KEY_SECURITY_PRIVATE_KEY = "security-private-key";
+constexpr const char* KEY_PAIRING_PSK = "pairing-psk";
+constexpr const char* KEY_PAIRING_PREFIX = "pairing.";
 
 /// An environment variable's value, or empty when it is unset or set to nothing.
 ///
@@ -158,6 +161,38 @@ std::optional<bool> StateStore::muted() const {
 bool StateStore::set_volume_and_muted(uint8_t volume, bool muted) {
     return this->set_all({{KEY_VOLUME, std::to_string(static_cast<unsigned>(volume))},
                           {KEY_MUTED, muted ? "true" : "false"}});
+}
+
+std::optional<std::string> StateStore::security_private_key() const {
+    return this->get(KEY_SECURITY_PRIVATE_KEY);
+}
+
+bool StateStore::set_security_private_key(const std::string& value) {
+    return !value.empty() && this->set_all({{KEY_SECURITY_PRIVATE_KEY, value}});
+}
+
+std::optional<std::string> StateStore::pairing_psk() const {
+    return this->get(KEY_PAIRING_PSK);
+}
+
+bool StateStore::set_pairing_psk(const std::string& value) {
+    return !value.empty() && this->set_all({{KEY_PAIRING_PSK, value}});
+}
+
+std::vector<sendspin::SendspinPersistedPairingRecord> StateStore::pairing_records() const {
+    std::vector<sendspin::SendspinPersistedPairingRecord> records;
+    const std::string prefix(KEY_PAIRING_PREFIX);
+    for (const auto& [key, value] : this->values_) {
+        if (key.rfind(prefix, 0) != 0 || value.empty()) continue;
+        const std::string server_id = key.substr(prefix.size());
+        if (!server_id.empty()) records.push_back({server_id, value});
+    }
+    return records;
+}
+
+bool StateStore::set_pairing_record(const std::string& server_id, const std::string& psk) {
+    if (server_id.empty() || psk.empty()) return false;
+    return this->set_all({{std::string(KEY_PAIRING_PREFIX) + server_id, psk}});
 }
 
 std::optional<std::string> StateStore::get(const std::string& key) const {

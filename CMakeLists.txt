@@ -72,14 +72,30 @@ set(BUILD_EXAMPLES OFF CACHE BOOL "Build sendspin-cpp's own examples")
 # deleting rather than reasoning about.
 set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "Install IXWebSocket alongside our own targets")
 
-include(FetchContent)
-FetchContent_Declare(
-    sendspin
-    GIT_REPOSITORY https://github.com/Sendspin/sendspin-cpp.git
-    GIT_TAG        ${SENDSPIN_GIT_TAG}
-    GIT_SHALLOW    TRUE
+#include(FetchContent)
+#FetchContent_Declare(
+#    sendspin
+#    GIT_REPOSITORY https://github.com/Sendspin/sendspin-cpp.git
+#    GIT_TAG        ${SENDSPIN_GIT_TAG}
+#    GIT_SHALLOW    TRUE
+#)
+#FetchContent_MakeAvailable(sendspin)
+
+set(SENDSPIN_SOURCE_DIR "/sendspin-cpp" CACHE PATH
+    "Path to sendspin-cpp source tree")
+
+if(NOT EXISTS "${SENDSPIN_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "sendspin-cpp not found at ${SENDSPIN_SOURCE_DIR}")
+endif()
+
+message(STATUS
+    "sendspin-cli: using sendspin-cpp from ${SENDSPIN_SOURCE_DIR}")
+
+add_subdirectory(
+    "${SENDSPIN_SOURCE_DIR}"
+    "${CMAKE_BINARY_DIR}/sendspin"
 )
-FetchContent_MakeAvailable(sendspin)
 
 # ==============================================================================
 # Audio backends

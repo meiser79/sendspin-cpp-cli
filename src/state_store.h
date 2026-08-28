@@ -32,6 +32,7 @@
 #pragma once
 
 #include <cstddef>
+#include <sendspin/client.h>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -141,6 +142,14 @@ public:
     /// inside a single `drain_events()`, so two separate writes would let a kill land between them
     /// and leave the new volume beside the old mute -- a pair that was never true.
     bool set_volume_and_muted(uint8_t volume, bool muted);
+
+    // Noise identity and pairing persistence. Values are base64url without padding.
+    std::optional<std::string> security_private_key() const;
+    bool set_security_private_key(const std::string& value);
+    std::optional<std::string> pairing_psk() const;
+    bool set_pairing_psk(const std::string& value);
+    std::vector<sendspin::SendspinPersistedPairingRecord> pairing_records() const;
+    bool set_pairing_record(const std::string& server_id, const std::string& psk);
 
 private:
     /// The value for `key`, or nothing when it is absent.
