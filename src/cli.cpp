@@ -25,6 +25,7 @@
 #include <limits.h>
 #include <unistd.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -68,6 +69,12 @@ enum LongOnly {
     OPT_CONTROL_SOCKET,
     OPT_NO_CONTROL,
     OPT_STATE_DIR,
+    OPT_PLAYER_ENABLED,
+    OPT_SOURCE_ENABLED,
+    OPT_LINE_SENSE,
+    OPT_LINE_SENSE_DBFS,
+    OPT_LINE_SENSE_ATTACK_MS,
+    OPT_LINE_SENSE_RELEASE_MS,
     OPT_CONFIG,
     OPT_HOOK_START,
     OPT_HOOK_STOP,
@@ -98,6 +105,13 @@ struct SettableOption {
 const std::vector<SettableOption>& settable_options() {
     static const std::vector<SettableOption> table = {
         {Opt::Device, "output", "-o"},
+        {Opt::InputDevice, "input", "-i"},
+        {Opt::PlayerEnabled, "player-enabled", "--player-enabled"},
+        {Opt::SourceEnabled, "source-enabled", "--source-enabled"},
+        {Opt::LineSense, "line-sense", "--line-sense"},
+        {Opt::LineSenseDbfs, "line-sense-dbfs", "--line-sense-dbfs"},
+        {Opt::LineSenseAttackMs, "line-sense-attack-ms", "--line-sense-attack-ms"},
+        {Opt::LineSenseReleaseMs, "line-sense-release-ms", "--line-sense-release-ms"},
         {Opt::Name, "name", "-n"},
         {Opt::Server, "server", "-s"},
         {Opt::Pidfile, "pidfile", "-P"},
@@ -191,6 +205,31 @@ bool parse_static_delay(const std::string& str, uint16_t& delay_ms) {
         return false;
     }
     delay_ms = static_cast<uint16_t>(value);
+    return true;
+}
+
+bool parse_line_sense_dbfs(const std::string& str, double& dbfs) {
+    if (str.empty()) {
+        return false;
+    }
+    char* end = nullptr;
+    const double value = std::strtod(str.c_str(), &end);
+    if (end == str.c_str() || end == nullptr || *end != '\0' || !std::isfinite(value) ||
+        value < MIN_LINE_SENSE_DBFS || value > MAX_LINE_SENSE_DBFS) {
+        return false;
+    }
+    dbfs = value;
+    return true;
+}
+bool parse_line_sense_window_ms(const std::string& str, uint32_t& window_ms) {
+    if (!is_all_digits(str)) {
+        return false;
+    }
+    const unsigned long value = std::strtoul(str.c_str(), nullptr, 10);
+    if (value > MAX_LINE_SENSE_WINDOW_MS) {
+        return false;
+    }
+    window_ms = static_cast<uint32_t>(value);
     return true;
 }
 
@@ -314,6 +353,51 @@ bool apply_option(const SettableOption& option, const std::string& value, Option
                 return false;
             }
             out.device = value;
+            break;
+        case Opt::InputDevice:
+            if (empty_value()) {
+                return false;
+            }
+            out.input_device = value;
+            break;
+        case Opt::PlayerEnabled:
+            if (!parse_bool(value, out.player_enabled)) {
+                error = "invalid --player-enabled '" + value + "' -- expected true or false";
+                return false;
+            }
+            break;
+        case Opt::SourceEnabled:
+            if (!parse_bool(value, out.source_enabled)) {
+                error = "invalid --source-enabled '" + value + "' -- expected true or false";
+                return false;
+            }
+            break;
+        case Opt::LineSense:
+            if (!parse_bool(value, out.line_sense)) {
+                error = "invalid --line-sense '" + value + "' -- expected true or false";
+                return false;
+            }
+            break;
+        case Opt::LineSenseDbfs:
+            if (!parse_line_sense_dbfs(value, out.line_sense_dbfs)) {
+                error = "invalid --line-sense-dbfs '" + value + "' -- expected " +
+                        std::to_string(static_cast<int>(MIN_LINE_SENSE_DBFS)) + " to 0";
+                return false;
+            }
+            break;
+        case Opt::LineSenseAttackMs:
+            if (!parse_line_sense_window_ms(value, out.line_sense_attack_ms)) {
+                error = "invalid --line-sense-attack-ms '" + value + "' -- expected 0-" +
+                        std::to_string(MAX_LINE_SENSE_WINDOW_MS);
+                return false;
+            }
+            break;
+        case Opt::LineSenseReleaseMs:
+            if (!parse_line_sense_window_ms(value, out.line_sense_release_ms)) {
+                error = "invalid --line-sense-release-ms '" + value + "' -- expected 0-" +
+                        std::to_string(MAX_LINE_SENSE_WINDOW_MS);
+                return false;
+            }
             break;
         case Opt::Name:
             if (empty_value()) {
@@ -622,6 +706,13 @@ bool parse_options(int argc, char* argv[], Options& out, std::FILE* err) {
         {"manufacturer", required_argument, nullptr, OPT_MANUFACTURER},
         {"product-name", required_argument, nullptr, OPT_PRODUCT_NAME},
         {"audio-format", required_argument, nullptr, OPT_AUDIO_FORMAT},
+        {"input", required_argument, nullptr, 'i'},
+        {"player-enabled", required_argument, nullptr, OPT_PLAYER_ENABLED},
+        {"source-enabled", required_argument, nullptr, OPT_SOURCE_ENABLED},
+        {"line-sense", required_argument, nullptr, OPT_LINE_SENSE},
+        {"line-sense-dbfs", required_argument, nullptr, OPT_LINE_SENSE_DBFS},
+        {"line-sense-attack-ms", required_argument, nullptr, OPT_LINE_SENSE_ATTACK_MS},
+        {"line-sense-release-ms", required_argument, nullptr, OPT_LINE_SENSE_RELEASE_MS},
         {nullptr, 0, nullptr, 0},
     };
 
@@ -704,7 +795,7 @@ bool parse_options(int argc, char* argv[], Options& out, std::FILE* err) {
     // The leading ':' is what separates "you left the value off" from "no such flag":
     // getopt then returns ':' for a missing argument instead of folding it into '?'.
     int opt = 0;
-    while ((opt = getopt_long(flag_argc, flag_argv, ":o:ln:s:zP:d:f:h", long_opts, nullptr)) !=
+    while ((opt = getopt_long(flag_argc, flag_argv, ":o:i:ln:s:zP:d:f:h", long_opts, nullptr)) !=
            -1) {
         switch (opt) {
             case 'o':
@@ -793,6 +884,26 @@ bool parse_options(int argc, char* argv[], Options& out, std::FILE* err) {
                 break;
             case OPT_AUDIO_FORMAT:
                 apply(Opt::AudioFormat, optarg);
+            case 'i':
+                apply(Opt::InputDevice, optarg);
+                break;
+            case OPT_PLAYER_ENABLED:
+                apply(Opt::PlayerEnabled, optarg);
+                break;
+            case OPT_SOURCE_ENABLED:
+                apply(Opt::SourceEnabled, optarg);
+                break;
+            case OPT_LINE_SENSE:
+                apply(Opt::LineSense, optarg);
+                break;
+            case OPT_LINE_SENSE_DBFS:
+                apply(Opt::LineSenseDbfs, optarg);
+                break;
+            case OPT_LINE_SENSE_ATTACK_MS:
+                apply(Opt::LineSenseAttackMs, optarg);
+                break;
+            case OPT_LINE_SENSE_RELEASE_MS:
+                apply(Opt::LineSenseReleaseMs, optarg);
                 break;
             case ':':
                 fail("option '" + offending_option(flag_argv, optind) + "' needs a value");
@@ -961,10 +1072,12 @@ bool parse_options(int argc, char* argv[], Options& out, std::FILE* err) {
         // listen on anything. Left it out and it would silently produce a "this player was
         // started with --no-control" message about the wrong process.
         static constexpr Opt DAEMON_ONLY[] = {
-            Opt::Device,    Opt::Name,         Opt::Server,      Opt::Daemonize,   Opt::Pidfile,
-            Opt::Logfile,   Opt::LogLevel,     Opt::BufferMs,    Opt::NoMdns,      Opt::MdnsName,
-            Opt::NoControl, Opt::StateDir,     Opt::StaticDelay, Opt::HookStart,   Opt::HookStop,
-            Opt::ClientId,  Opt::Manufacturer, Opt::ProductName, Opt::AudioFormat,
+            Opt::Device,             Opt::Name,          Opt::Server,      Opt::Daemonize,     Opt::Pidfile,
+            Opt::Logfile,            Opt::LogLevel,      Opt::BufferMs,    Opt::NoMdns,        Opt::MdnsName,
+            Opt::NoControl,          Opt::StateDir,      Opt::StaticDelay, Opt::HookStart,     Opt::HookStop,
+            Opt::ClientId,           Opt::Manufacturer,  Opt::ProductName, Opt::AudioFormat,   Opt::InputDevice,
+            Opt::PlayerEnabled,      Opt::SourceEnabled, Opt::LineSense,   Opt::LineSenseDbfs, Opt::LineSenseAttackMs,
+            Opt::LineSenseReleaseMs,
         };
         for (Opt opt : DAEMON_ONLY) {
             if (out.was_given(opt)) {
@@ -1016,6 +1129,11 @@ bool parse_options(int argc, char* argv[], Options& out, std::FILE* err) {
     }
     if (out.mdns_name.empty()) {
         out.mdns_name = out.name;
+    }
+    if (out.subcommand.empty() && !out.player_enabled && !out.source_enabled) {
+        std::fprintf(err,
+                     "error: player-enabled and source-enabled cannot both be false\n");
+        return false;
     }
     return true;
 }
@@ -1069,6 +1187,21 @@ void print_usage(std::FILE* out, const char* prog) {
     std::fprintf(out, "                Anything else is an ALSA PCM name: -o hw:2,0, -o default\n");
 #endif
     std::fprintf(out, "                -l lists this host's devices and what they accept\n");
+    std::fprintf(out, "  -i, --input <device>\n");
+    std::fprintf(out, "                ALSA capture PCM for source@v1 (default: %s)\n",
+                 DEFAULT_INPUT_DEVICE);
+    std::fprintf(out, "  --line-sense <bool>\n");
+    std::fprintf(out, "                Advertise/report source line sense (default: %s)\n",
+                 DEFAULT_LINE_SENSE ? "true" : "false");
+    std::fprintf(out, "  --line-sense-dbfs <dBFS>\n");
+    std::fprintf(out, "                Signal threshold, %.0f..%.0f dBFS (default: %.0f)\n",
+                 MIN_LINE_SENSE_DBFS, MAX_LINE_SENSE_DBFS, DEFAULT_LINE_SENSE_DBFS);
+    std::fprintf(out, "  --line-sense-attack-ms <ms>\n");
+    std::fprintf(out, "                Continuous signal before present (default: %u ms)\n",
+                 DEFAULT_LINE_SENSE_ATTACK_MS);
+    std::fprintf(out, "  --line-sense-release-ms <ms>\n");
+    std::fprintf(out, "                Continuous silence before absent (default: %u ms)\n",
+                 DEFAULT_LINE_SENSE_RELEASE_MS);
     std::fprintf(out, "  -l            List output devices with their capabilities, and exit\n");
     std::fprintf(out, "  -n, --name <name>\n");
     std::fprintf(out, "                Friendly name (default: this host's name)\n");

@@ -26,6 +26,24 @@
 #include <string>
 #include <vector>
 
+/// @brief Default capture PCM. On Home Assistant this resolves through the
+/// Supervisor-provided ALSA/PulseAudio configuration and follows the app's
+/// independently selected Audio input.
+inline constexpr const char* DEFAULT_INPUT_DEVICE = "default";
+inline constexpr bool DEFAULT_PLAYER_ENABLED = true;
+#if defined(SENDSPIN_ENABLE_SOURCE) && defined(SENDSPIN_CLI_HAVE_ALSA)
+inline constexpr bool DEFAULT_SOURCE_ENABLED = true;
+#else
+inline constexpr bool DEFAULT_SOURCE_ENABLED = false;
+#endif
+inline constexpr bool DEFAULT_LINE_SENSE = true;
+inline constexpr double DEFAULT_LINE_SENSE_DBFS = -50.0;
+inline constexpr uint32_t DEFAULT_LINE_SENSE_ATTACK_MS = 300;
+inline constexpr uint32_t DEFAULT_LINE_SENSE_RELEASE_MS = 5000;
+inline constexpr double MIN_LINE_SENSE_DBFS = -120.0;
+inline constexpr double MAX_LINE_SENSE_DBFS = 0.0;
+inline constexpr uint32_t MAX_LINE_SENSE_WINDOW_MS = 600000;
+
 namespace sendspin_cli {
 
 /// @brief The WebSocket endpoint this player serves, and the spec's recommended value.
@@ -99,6 +117,13 @@ inline constexpr uint32_t MAX_BUFFER_MS = 2000;
 /// `src/cli.cpp` holds that list beside the keys it maps.
 enum class Opt : unsigned {
     Device,       ///< -o, --output
+    InputDevice,  ///< --input
+    PlayerEnabled, ///< --player-enabled
+    SourceEnabled, ///< --source-enabled
+    LineSense,    ///< --line-sense
+    LineSenseDbfs, ///< --line-sense-dbfs
+    LineSenseAttackMs, ///< --line-sense-attack-ms
+    LineSenseReleaseMs, ///< --line-sense-release-ms
     ListDevices,  ///< -l
     Name,         ///< -n, --name
     Server,       ///< -s, --server
@@ -129,6 +154,13 @@ enum class Opt : unsigned {
 /// endpoint can drive this one from muscle memory.
 struct Options {
     std::string device{DEFAULT_OUTPUT_DEVICE};  ///< -o <device>: audio output backend
+    std::string input_device{DEFAULT_INPUT_DEVICE}; ///< --input <device>: ALSA capture PCM
+    bool player_enabled{DEFAULT_PLAYER_ENABLED}; ///< --player-enabled <bool>
+    bool source_enabled{DEFAULT_SOURCE_ENABLED}; ///< --source-enabled <bool>
+    bool line_sense{DEFAULT_LINE_SENSE}; ///< --line-sense <bool>
+    double line_sense_dbfs{DEFAULT_LINE_SENSE_DBFS}; ///< --line-sense-dbfs <dBFS>
+    uint32_t line_sense_attack_ms{DEFAULT_LINE_SENSE_ATTACK_MS};
+    uint32_t line_sense_release_ms{DEFAULT_LINE_SENSE_RELEASE_MS};
     bool list_devices{false};    ///< -l: list output devices and exit
     std::string name;            ///< -n <name>: friendly name; defaults to the hostname
 

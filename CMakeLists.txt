@@ -361,7 +361,7 @@ else()
 endif()
 
 if(SENDSPIN_CLI_ALSA_ENABLED)
-    target_sources(sendspin-cli-core PRIVATE src/alsa_sink.cpp)
+    target_sources(sendspin-cli-core PRIVATE src/alsa_sink.cpp src/alsa_source.cpp)
     target_link_libraries(sendspin-cli-core PUBLIC ALSA::ALSA)
     target_compile_definitions(sendspin-cli-core PUBLIC SENDSPIN_CLI_HAVE_ALSA)
 endif()

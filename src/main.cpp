@@ -27,6 +27,9 @@
 /// player over that player's control socket and exits, without opening a device or a port.
 
 #include "audio_sink.h"
+#ifdef SENDSPIN_CLI_HAVE_ALSA
+#include "alsa_source.h"
+#endif
 #include "cli.h"
 #include "control.h"
 #include "daemon.h"
@@ -43,6 +46,9 @@
 #include <sendspin/controller_role.h>
 #include <sendspin/metadata_role.h>
 #include <sendspin/player_role.h>
+#ifdef SENDSPIN_ENABLE_SOURCE
+#include <sendspin/source_role.h>
+#endif
 #include <sendspin/types.h>
 
 // For sigaction(), which <csignal> is not required to declare.
@@ -52,6 +58,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
@@ -363,6 +370,49 @@ private:
 /// has no thread of its own: `send_command()` reaches `SendspinClient::send_text()` and
 /// `ConnectionManager::current()`, documented main-thread-only, and `get_controller_state()`
 /// returns a reference to a vector `drain_events()` move-assigns from inside `client.loop()`.
+class SourceControlDispatcher final : public ControlHandler {
+public:
+    SourceControlDispatcher(const Options& opts, sendspin::SendspinClient& client)
+        : opts_(opts), client_(client) {}
+
+    std::string handle_control_request(const std::string& line) override {
+        std::string name;
+        std::vector<std::string> args;
+        if (!split_control_line(line, name, args)) {
+            return encode_control_reply(ControlStatus::Usage, "empty request", "");
+        }
+
+        ControlRequest request;
+        std::string error;
+        if (!parse_control_request(name, args, request, error)) {
+            return encode_control_reply(ControlStatus::Usage, error, "");
+        }
+
+        if (request.command != ControlCommand::Status) {
+            return encode_control_reply(
+                ControlStatus::Unsupported,
+                "this endpoint is running source-only; player control commands are unavailable",
+                "");
+        }
+
+        StatusSnapshot snapshot;
+        snapshot.name = this->opts_.name;
+        snapshot.connected = this->client_.is_connected();
+        const std::optional<sendspin::ServerInformationObject> info =
+            this->client_.get_server_information();
+        if (info.has_value()) {
+            snapshot.server_id = info->server_id;
+            snapshot.server_name = info->name;
+        }
+        snapshot.output = "source-only";
+        return encode_control_reply(ControlStatus::Ok, "", format_status(snapshot));
+    }
+
+private:
+    const Options& opts_;
+    sendspin::SendspinClient& client_;
+};
+
 class ControlDispatcher final : public ControlHandler {
 public:
     /// Every reference must outlive this dispatcher, which in main() they all do.
@@ -548,7 +598,7 @@ bool start_control_socket(ControlSocket& socket, const Options& opts) {
             break;
     }
     log_line(LogLevel::WARN, LOG_TAG_CONTROL,
-             "%s -- carrying on without a control socket; this player can still be driven by its "
+             "%s -- carrying on without a control socket; this endpoint can still be driven by its "
              "server",
              error.c_str());
     return true;
@@ -740,7 +790,8 @@ int main(int argc, char* argv[]) {
     }
 
     std::string sink_error;
-    std::unique_ptr<AudioSink> sink = make_audio_sink(opts.device, opts.buffer_ms, sink_error);
+    std::unique_ptr<AudioSink> sink =
+        make_audio_sink(opts.player_enabled ? opts.device : "null", opts.buffer_ms, sink_error);
     if (!sink) {
         log_fatal(LOG_TAG_AUDIO, "%s", sink_error.c_str());
         return 1;
@@ -819,6 +870,74 @@ int main(int argc, char* argv[]) {
                  describe_formats({*opts.audio_format}).c_str());
     }
 
+#if defined(SENDSPIN_ENABLE_SOURCE) && defined(SENDSPIN_CLI_HAVE_ALSA)
+    // A source-only endpoint must not add player@v1 at all: role presence is determined by
+    // add_*() calls in sendspin-cpp and therefore by what goes into client/hello.
+    if (!opts.player_enabled) {
+        sendspin::SourceRoleConfig source_config;
+        source_config.format.codec = sendspin::SendspinCodecFormat::PCM;
+        source_config.format.sample_rate = 48000;
+        source_config.format.channels = 2;
+        source_config.format.bit_depth = 16;
+        source_config.line_sense = opts.line_sense;
+        sendspin::SourceRole& source = client.add_source(std::move(source_config));
+        AlsaSource source_capture(source, opts.input_device, 48000, 2, opts.line_sense,
+                                  opts.line_sense_dbfs, opts.line_sense_attack_ms,
+                                  opts.line_sense_release_ms);
+        source_capture.start();
+
+        HostNetworkProvider network_provider;
+        client.set_network_provider(&network_provider);
+        if (!client.start_server()) {
+            log_fatal(LOG_TAG, "could not start the Sendspin server on port %u", opts.port);
+            return 1;
+        }
+        cli_log(LogLevel::INFO,
+                "sendspin-cli %s listening on port %u as \"%s\" "
+                "(roles: source@v1, input: %s, mDNS: %s)",
+                SENDSPIN_CLI_VERSION, opts.port, opts.name.c_str(), opts.input_device.c_str(),
+                mdns_backend_name().c_str());
+
+        MdnsService mdns;
+        start_advertising(mdns, opts);
+        SourceControlDispatcher control_dispatcher(opts, client);
+        std::unique_ptr<OutboundMode> outbound;
+        if (opts.was_given(Opt::Server)) {
+            if (opts.discover) {
+                std::string error;
+                if (!mdns.browse(error)) {
+                    log_line(LogLevel::WARN, LOG_TAG_DISCOVERY, "%s -- retrying",
+                             error.c_str());
+                }
+                log_line(LogLevel::INFO, LOG_TAG_DISCOVERY,
+                         "Looking for a Sendspin server on %s%s%s%s",
+                         MDNS_SERVER_SERVICE, opts.discover_name.empty() ? "" : " named \"",
+                         opts.discover_name.c_str(), opts.discover_name.empty() ? "" : "\"");
+            }
+            outbound = std::make_unique<OutboundMode>(opts, mdns, state_store);
+        }
+        while (g_running.load()) {
+            const int64_t now_ms = monotonic_ms();
+            client.loop();
+            source_capture.poll();
+            mdns.poll(now_ms);
+            control_socket.poll(now_ms, control_dispatcher);
+            if (outbound) {
+                outbound->tick(client, now_ms);
+            }
+            log_reopen_if_requested();
+            std::this_thread::sleep_for(std::chrono::milliseconds(LOOP_INTERVAL_MS));
+        }
+        cli_log(LogLevel::INFO, "Shutting down");
+        mdns.stop();
+        control_socket.close();
+        source_capture.stop();
+        client.disconnect(sendspin::SendspinGoodbyeReason::SHUTDOWN);
+        sink->stop();
+        return 0;
+    }
+#endif
+
     sendspin::PlayerRoleConfig player_config;
     player_config.audio_formats = std::move(formats);
     // Explicitly 0, and it must stay 0: both real sinks already report *future* finish timestamps
@@ -837,6 +956,23 @@ int main(int argc, char* argv[]) {
     // remembered delay wins. Set before add_player(), which is where the role loads it.
     player_config.initial_static_delay_ms = opts.static_delay_ms;
     sendspin::PlayerRole& player = client.add_player(std::move(player_config));
+#if defined(SENDSPIN_ENABLE_SOURCE) && defined(SENDSPIN_CLI_HAVE_ALSA)
+    std::unique_ptr<AlsaSource> source_capture;
+    if (opts.source_enabled) {
+        // One physical Local Audio endpoint, one Sendspin identity and one WebSocket.
+        sendspin::SourceRoleConfig source_config;
+        source_config.format.codec = sendspin::SendspinCodecFormat::PCM;
+        source_config.format.sample_rate = 48000;
+        source_config.format.channels = 2;
+        source_config.format.bit_depth = 16;
+        source_config.line_sense = opts.line_sense;
+        sendspin::SourceRole& source = client.add_source(std::move(source_config));
+        source_capture = std::make_unique<AlsaSource>(
+            source, opts.input_device, 48000, 2, opts.line_sense, opts.line_sense_dbfs,
+            opts.line_sense_attack_ms, opts.line_sense_release_ms);
+        source_capture->start();
+    }
+#endif
     // Advertises the `static_delay` command, which is also what makes the stored delay *apply*:
     // the library reports it as 0 in `client/state` and ignores it in sync timing while
     // adjustability is off, per the spec's rule that a delay not exposed as a knob must not be
@@ -974,6 +1110,11 @@ int main(int argc, char* argv[]) {
     while (g_running.load()) {
         const int64_t now_ms = monotonic_ms();
         client.loop();
+#if defined(SENDSPIN_ENABLE_SOURCE) && defined(SENDSPIN_CLI_HAVE_ALSA)
+        if (source_capture) {
+            source_capture->poll();
+        }
+#endif
         // All three of these run their callbacks on this thread, which is what each of them
         // requires: dns_sd's and connect_to()'s for the first two, and for the control socket
         // every read of the roles plus send_command() itself. A round trip is therefore bounded
@@ -1006,6 +1147,11 @@ int main(int argc, char* argv[]) {
     // half-torn-down player, and its path must be gone before a restart tries to bind it.
     mdns.stop();
     control_socket.close();
+#if defined(SENDSPIN_ENABLE_SOURCE) && defined(SENDSPIN_CLI_HAVE_ALSA)
+    if (source_capture) {
+        source_capture->stop();
+    }
+#endif
     client.disconnect(sendspin::SendspinGoodbyeReason::SHUTDOWN);
     // disconnect() only asks. The stream's end is delivered by client.loop() like every other
     // callback, so the loop above having exited is not the end of it: without this pump a
