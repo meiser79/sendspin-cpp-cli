@@ -124,6 +124,7 @@ enum class Opt : unsigned {
     LineSenseDbfs, ///< --line-sense-dbfs
     LineSenseAttackMs, ///< --line-sense-attack-ms
     LineSenseReleaseMs, ///< --line-sense-release-ms
+    SourceStreamStyle, ///< --source-stream-style
     ListDevices,  ///< -l
     Name,         ///< -n, --name
     Server,       ///< -s, --server
@@ -161,6 +162,7 @@ struct Options {
     double line_sense_dbfs{DEFAULT_LINE_SENSE_DBFS}; ///< --line-sense-dbfs <dBFS>
     uint32_t line_sense_attack_ms{DEFAULT_LINE_SENSE_ATTACK_MS};
     uint32_t line_sense_release_ms{DEFAULT_LINE_SENSE_RELEASE_MS};
+    std::string source_stream_style{"legacy"}; ///< legacy=client_stream, spec=client-stream
     bool list_devices{false};    ///< -l: list output devices and exit
     std::string name;            ///< -n <name>: friendly name; defaults to the hostname
 

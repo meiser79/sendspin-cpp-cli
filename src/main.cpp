@@ -163,6 +163,12 @@ public:
     bool save_pairing_record(const std::string& server_id, const std::string& psk) override {
         return this->store_.set_pairing_record(server_id, psk);
     }
+    std::optional<std::string> load_security_value(const std::string& key) override {
+        return this->store_.security_value(key);
+    }
+    bool save_security_value(const std::string& key, const std::string& value) override {
+        return this->store_.set_security_value(key, value);
+    }
 
 private:
     StateStore& store_;
@@ -904,6 +910,10 @@ int main(int argc, char* argv[]) {
         source_config.format.channels = 2;
         source_config.format.bit_depth = 16;
         source_config.line_sense = opts.line_sense;
+        source_config.stream_message_style =
+            opts.source_stream_style == "spec"
+                ? sendspin::SourceStreamMessageStyle::SPEC_HYPHEN
+                : sendspin::SourceStreamMessageStyle::LEGACY_UNDERSCORE;
         sendspin::SourceRole& source = client.add_source(std::move(source_config));
         AlsaSource source_capture(source, opts.input_device, 48000, 2, opts.line_sense,
                                   opts.line_sense_dbfs, opts.line_sense_attack_ms,
@@ -994,6 +1004,10 @@ int main(int argc, char* argv[]) {
         source_config.format.channels = 2;
         source_config.format.bit_depth = 16;
         source_config.line_sense = opts.line_sense;
+        source_config.stream_message_style =
+            opts.source_stream_style == "spec"
+                ? sendspin::SourceStreamMessageStyle::SPEC_HYPHEN
+                : sendspin::SourceStreamMessageStyle::LEGACY_UNDERSCORE;
         sendspin::SourceRole& source = client.add_source(std::move(source_config));
         source_capture = std::make_unique<AlsaSource>(
             source, opts.input_device, 48000, 2, opts.line_sense, opts.line_sense_dbfs,

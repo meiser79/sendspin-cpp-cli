@@ -150,6 +150,8 @@ public:
     bool set_pairing_psk(const std::string& value);
     std::vector<sendspin::SendspinPersistedPairingRecord> pairing_records() const;
     bool set_pairing_record(const std::string& server_id, const std::string& psk);
+    std::optional<std::string> security_value(const std::string& key) const;
+    bool set_security_value(const std::string& key, const std::string& value);
 
 private:
     /// The value for `key`, or nothing when it is absent.

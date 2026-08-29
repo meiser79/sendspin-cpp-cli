@@ -75,6 +75,7 @@ enum LongOnly {
     OPT_LINE_SENSE_DBFS,
     OPT_LINE_SENSE_ATTACK_MS,
     OPT_LINE_SENSE_RELEASE_MS,
+    OPT_SOURCE_STREAM_STYLE,
     OPT_CONFIG,
     OPT_HOOK_START,
     OPT_HOOK_STOP,
@@ -112,6 +113,7 @@ const std::vector<SettableOption>& settable_options() {
         {Opt::LineSenseDbfs, "line-sense-dbfs", "--line-sense-dbfs"},
         {Opt::LineSenseAttackMs, "line-sense-attack-ms", "--line-sense-attack-ms"},
         {Opt::LineSenseReleaseMs, "line-sense-release-ms", "--line-sense-release-ms"},
+        {Opt::SourceStreamStyle, "source-stream-style", "--source-stream-style"},
         {Opt::Name, "name", "-n"},
         {Opt::Server, "server", "-s"},
         {Opt::Pidfile, "pidfile", "-P"},
@@ -398,6 +400,13 @@ bool apply_option(const SettableOption& option, const std::string& value, Option
                         std::to_string(MAX_LINE_SENSE_WINDOW_MS);
                 return false;
             }
+            break;
+        case Opt::SourceStreamStyle:
+            if (value != "legacy" && value != "spec") {
+                error = "invalid --source-stream-style '" + value + "' -- expected legacy or spec";
+                return false;
+            }
+            out.source_stream_style = value;
             break;
         case Opt::Name:
             if (empty_value()) {
@@ -713,6 +722,7 @@ bool parse_options(int argc, char* argv[], Options& out, std::FILE* err) {
         {"line-sense-dbfs", required_argument, nullptr, OPT_LINE_SENSE_DBFS},
         {"line-sense-attack-ms", required_argument, nullptr, OPT_LINE_SENSE_ATTACK_MS},
         {"line-sense-release-ms", required_argument, nullptr, OPT_LINE_SENSE_RELEASE_MS},
+        {"source-stream-style", required_argument, nullptr, OPT_SOURCE_STREAM_STYLE},
         {nullptr, 0, nullptr, 0},
     };
 
@@ -904,6 +914,9 @@ bool parse_options(int argc, char* argv[], Options& out, std::FILE* err) {
                 break;
             case OPT_LINE_SENSE_RELEASE_MS:
                 apply(Opt::LineSenseReleaseMs, optarg);
+                break;
+            case OPT_SOURCE_STREAM_STYLE:
+                apply(Opt::SourceStreamStyle, optarg);
                 break;
             case ':':
                 fail("option '" + offending_option(flag_argv, optind) + "' needs a value");
@@ -1202,6 +1215,8 @@ void print_usage(std::FILE* out, const char* prog) {
     std::fprintf(out, "  --line-sense-release-ms <ms>\n");
     std::fprintf(out, "                Continuous silence before absent (default: %u ms)\n",
                  DEFAULT_LINE_SENSE_RELEASE_MS);
+    std::fprintf(out, "  --source-stream-style <legacy|spec>\n");
+    std::fprintf(out, "                Source stream control spelling: legacy client_stream or spec client-stream\n");
     std::fprintf(out, "  -l            List output devices with their capabilities, and exit\n");
     std::fprintf(out, "  -n, --name <name>\n");
     std::fprintf(out, "                Friendly name (default: this host's name)\n");

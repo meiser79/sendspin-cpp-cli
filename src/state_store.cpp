@@ -195,6 +195,16 @@ bool StateStore::set_pairing_record(const std::string& server_id, const std::str
     return this->set_all({{std::string(KEY_PAIRING_PREFIX) + server_id, psk}});
 }
 
+std::optional<std::string> StateStore::security_value(const std::string& key) const {
+    if (key.empty()) return std::nullopt;
+    return this->get("security-extra." + key);
+}
+
+bool StateStore::set_security_value(const std::string& key, const std::string& value) {
+    if (key.empty()) return false;
+    return this->set_all({{"security-extra." + key, value}});
+}
+
 std::optional<std::string> StateStore::get(const std::string& key) const {
     const auto found = this->values_.find(key);
     if (found == this->values_.end() || found->second.empty()) {
