@@ -391,6 +391,19 @@ TEST(ConfigPrecedence, SignalThresholdIsSettable) {
     EXPECT_EQ(parse.options().signal_threshold_dbfs, std::optional<int>(-45));
 }
 
+TEST(ConfigPrecedence, TheLastOptionIsNotMistakenForAnotherAlreadyGiven) {
+    ScratchDir scratch;
+    ASSERT_TRUE(scratch.created());
+    // output first: a given-mask too narrow for every option aliased signal-threshold onto it.
+    const std::string path = scratch.write("both", "output = null\nsignal-threshold = -40\n");
+
+    Parse parse({}, path);
+
+    ASSERT_TRUE(parse.ok()) << parse.diagnostics();
+    EXPECT_EQ(parse.options().signal_threshold_dbfs, std::optional<int>(-40));
+    EXPECT_TRUE(parse.options().was_given(Opt::SignalThreshold));
+}
+
 TEST(ConfigPrecedence, KeepOutputAliveIsSettableAndOffByDefault) {
     ScratchDir scratch;
     ASSERT_TRUE(scratch.created());

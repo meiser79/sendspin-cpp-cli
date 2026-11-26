@@ -209,11 +209,11 @@ struct Options {
     }
 
 private:
-    static constexpr uint32_t bit(Opt opt) {
-        return 1U << static_cast<unsigned>(opt);
+    static constexpr uint64_t bit(Opt opt) {
+        return uint64_t{1} << static_cast<unsigned>(opt);
     }
 
-    uint32_t given_{0};
+    uint64_t given_{0};
 };
 
 /// Parses and validates argv into `out`; with -z, relative paths are made absolute.
