@@ -98,6 +98,25 @@ only plays it when asked to.
 The device stays open the whole time instead of only while the server streams it, since
 the level can only be read from audio the card delivers.
 
+### Describe what the input plays
+
+A line-in carries no track information, but whatever feeds it often knows: a Bluetooth
+sender, a cast receiver, a media player another system tracks. `input-metadata` hands that
+to the server, which can show it while the input plays:
+
+```bash
+sendspin-cli input-metadata '{"title":"So What","artist":"Miles Davis","album":"Kind of Blue",
+  "artwork_url":"https://example.com/kob.jpg",
+  "progress":{"track_progress":5000,"track_duration":562000,"playback_speed":1000}}'
+sendspin-cli input-metadata clear
+```
+
+The keys are the spec's source metadata object: `title`, `artist`, `album_artist`, `album`,
+`artwork_url`, `year`, `track` and `progress`, with positions in milliseconds and
+`playback_speed` as speed × 1000 (`0` is paused). Anything else is refused. Send a new report
+when the track or its playback state changes, not to move the position on: the server works
+that out from `progress`. A server that does not know the field ignores it.
+
 `sendspin-cli -l` lists capture devices in their own section, under the outputs: ALSA
 PCMs with the rates, formats and channel counts each takes, then the PulseAudio sources
 and PipeWire source nodes, or on macOS the CoreAudio input devices, then PortAudio's input

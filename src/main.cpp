@@ -316,7 +316,8 @@ public:
                       const MetadataLogger& metadata_logger,
                       const PairingListener& pairing_listener, PlayerListener& player_listener,
                       sendspin::PlayerRole& player, const AudioSink& sink,
-                      const SourceCapture* capture, const StateStore& state_store)
+                      const SourceCapture* capture, sendspin::SourceRole* source,
+                      const StateStore& state_store)
         : opts_(opts),
           client_(client),
           controller_(controller),
@@ -327,6 +328,7 @@ public:
           player_(player),
           sink_(sink),
           capture_(capture),
+          source_(source),
           state_store_(state_store) {}
 
     std::string handle_control_request(const std::string& line) override {
@@ -404,6 +406,41 @@ public:
                 log_line(LogLevel::INFO, LOG_TAG_PLAYER, "Player %s locally",
                          request.flag.value_or(false) ? "muted" : "unmuted");
             }
+            return encode_control_reply(ControlStatus::Ok, "", "");
+        }
+
+        // Handled locally: the source role copies the report and republishes client/state.
+        if (request.command == ControlCommand::InputMetadata) {
+            if (this->source_ == nullptr) {
+                return encode_control_reply(ControlStatus::Usage,
+                                            "this player has no --input to describe", "");
+            }
+            const std::string& json = request.input_metadata.value_or(std::string());
+            if (json.empty()) {
+                this->source_->clear_metadata();
+                log_line(LogLevel::INFO, LOG_TAG_AUDIO, "Input metadata cleared locally");
+                return encode_control_reply(ControlStatus::Ok, "", "");
+            }
+            InputMetadata parsed;
+            std::string error;
+            if (!parse_input_metadata(json, parsed, error)) {
+                return encode_control_reply(ControlStatus::Usage, error, "");
+            }
+            sendspin::SourceMetadata report;
+            report.title = parsed.title;
+            report.artist = parsed.artist;
+            report.album_artist = parsed.album_artist;
+            report.album = parsed.album;
+            report.artwork_url = parsed.artwork_url;
+            report.year = parsed.year;
+            report.track = parsed.track;
+            report.progress = parsed.progress;
+            if (!this->source_->set_metadata(report)) {
+                return encode_control_reply(ControlStatus::Usage,
+                                            "the metadata was refused: text that is not UTF-8", "");
+            }
+            log_line(LogLevel::INFO, LOG_TAG_AUDIO, "Input metadata set locally: %s - %s",
+                     parsed.artist.value_or("").c_str(), parsed.title.value_or("").c_str());
             return encode_control_reply(ControlStatus::Ok, "", "");
         }
 
@@ -524,6 +561,8 @@ private:
     sendspin::PlayerRole& player_;
     const AudioSink& sink_;
     const SourceCapture* capture_;  ///< null without --input
+    /// Non-const only for `input-metadata`; null without --input.
+    sendspin::SourceRole* source_;
     const StateStore& state_store_;
 };
 
@@ -755,6 +794,8 @@ int main(int argc, char* argv[]) {
             log_fatal(LOG_TAG_AUDIO, "%s", source_error.c_str());
             return 1;
         }
+        // Reserves the text block input-metadata writes into.
+        source_config.metadata = true;
         log_line(LogLevel::INFO, LOG_TAG_AUDIO, "Input device '%s' captures %u Hz / %u ch / %u-bit",
                  source->name().c_str(), capture_format.sample_rate,
                  static_cast<unsigned>(capture_format.channels),
@@ -1051,7 +1092,7 @@ int main(int argc, char* argv[]) {
 
     ControlDispatcher control_dispatcher(opts, client, controller, metadata, metadata_logger,
                                          pairing_listener, player_listener, player, *sink,
-                                         capture.get(), state_store);
+                                         capture.get(), source_role_ptr, state_store);
 
     std::unique_ptr<OutboundMode> outbound;
     if (opts.was_given(Opt::Server)) {

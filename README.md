@@ -208,6 +208,7 @@ scaling the stream in software, see `--alsa-mixer` in
 sendspin-cli -n den --input default      # a microphone or line-in
 sendspin-cli -n den --input loopback     # what this host plays
 sendspin-cli -n den --input hw:1,0 --signal-threshold -50   # tell the server when a record plays
+sendspin-cli input-metadata '{"title":"So What","artist":"Miles Davis"}'   # and what it is
 ```
 
 Off unless given. `-l` lists capture devices too. See

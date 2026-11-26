@@ -26,6 +26,8 @@
 #include <unistd.h>
 #endif
 
+#include <ArduinoJson.h>
+
 #include <algorithm>
 #include <cerrno>
 #include <cstdlib>
@@ -230,6 +232,12 @@ const std::vector<ControlSubcommand>& control_subcommands() {
          "Set *this* player's own volume -- answered locally, published to the server, "
          "remembered across restarts. Not the group volume"},
         {"player-mute", ControlCommand::PlayerMute, 1, ON_OFF, "Mute or unmute this player alone"},
+        {"input-metadata", ControlCommand::InputMetadata, 1, "<json>|clear",
+         "Tell the server what the --input audio is, for a server to show while it plays: a JSON "
+         "object with any of title, artist, album_artist, album, artwork_url, year, track and "
+         "progress {track_progress, track_duration, playback_speed}, in the spec's units; "
+         "'clear' withdraws it. Send it when the track or its playback state changes, not to "
+         "move the position on"},
         {"delay", ControlCommand::Delay, 1, "<0-5000>",
          "Tell *this* endpoint how much latency its hardware adds after the audio port -- an "
          "amplifier, an external speaker. The player then hands audio over that much earlier, so "
@@ -372,6 +380,20 @@ bool parse_control_request(const std::string& name, const std::vector<std::strin
             out.repeat = mode;
             return true;
         }
+        case ControlCommand::InputMetadata: {
+            if (value == "clear") {
+                out.input_metadata = std::string();
+                return true;
+            }
+            InputMetadata parsed;
+            std::string why;
+            if (!parse_input_metadata(value, parsed, why)) {
+                error = std::string("'") + subcommand->name + "': " + why;
+                return false;
+            }
+            out.input_metadata = value;
+            return true;
+        }
         case ControlCommand::Pair: {
             if (value != "confirm" && value != "cancel") {
                 return reject(std::string("'confirm' or 'cancel'"));
@@ -412,8 +434,161 @@ std::string encode_control_request(const ControlRequest& request) {
         line += " " + std::to_string(static_cast<unsigned>(*request.delay_ms));
     } else if (request.confirm.has_value()) {
         line += *request.confirm ? " confirm" : " cancel";
+    } else if (request.input_metadata.has_value()) {
+        line += " " + (request.input_metadata->empty() ? std::string("clear")
+                                                       : percent_encode(*request.input_metadata));
     }
     return line;
+}
+
+std::string percent_encode(const std::string& text) {
+    static constexpr char HEX[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(text.size());
+    for (const char c : text) {
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte <= 0x20 || byte == 0x7F || byte == '%') {
+            out += '%';
+            out += HEX[byte >> 4U];
+            out += HEX[byte & 0x0FU];
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+bool percent_decode(const std::string& text, std::string& out) {
+    const auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'A' && c <= 'F') {
+            return c - 'A' + 10;
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        return -1;
+    };
+    out.clear();
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '%') {
+            out += text[i];
+            continue;
+        }
+        if (i + 2 >= text.size() || hex(text[i + 1]) < 0 || hex(text[i + 2]) < 0) {
+            return false;
+        }
+        out += static_cast<char>(hex(text[i + 1]) * 16 + hex(text[i + 2]));
+        i += 2;
+    }
+    return true;
+}
+
+bool parse_input_metadata(const std::string& json, InputMetadata& out, std::string& error) {
+    out = InputMetadata{};
+    JsonDocument doc;
+    if (deserializeJson(doc, json) || !doc.is<JsonObjectConst>()) {
+        error = "expected a JSON object, or 'clear'";
+        return false;
+    }
+    const auto text = [&error](JsonVariantConst value, const char* key,
+                               std::optional<std::string>& field) {
+        if (!value.is<const char*>()) {
+            error = std::string("'") + key + "' must be a string";
+            return false;
+        }
+        field = value.as<std::string>();
+        return true;
+    };
+    const auto number = [&error](JsonVariantConst value, const char* key, uint64_t max,
+                                 uint64_t& field) {
+        if (!value.is<uint64_t>() || value.as<uint64_t>() > max) {
+            error = std::string("'") + key + "' must be a whole number from 0 to " +
+                    std::to_string(max);
+            return false;
+        }
+        field = value.as<uint64_t>();
+        return true;
+    };
+    for (const JsonPairConst pair : doc.as<JsonObjectConst>()) {
+        const std::string key(pair.key().c_str());
+        const JsonVariantConst value = pair.value();
+        uint64_t n = 0;
+        if (key == "title") {
+            if (!text(value, "title", out.title)) {
+                return false;
+            }
+        } else if (key == "artist") {
+            if (!text(value, "artist", out.artist)) {
+                return false;
+            }
+        } else if (key == "album_artist") {
+            if (!text(value, "album_artist", out.album_artist)) {
+                return false;
+            }
+        } else if (key == "album") {
+            if (!text(value, "album", out.album)) {
+                return false;
+            }
+        } else if (key == "artwork_url") {
+            if (!text(value, "artwork_url", out.artwork_url)) {
+                return false;
+            }
+        } else if (key == "year") {
+            if (!number(value, "year", UINT16_MAX, n)) {
+                return false;
+            }
+            out.year = static_cast<uint16_t>(n);
+        } else if (key == "track") {
+            if (!number(value, "track", UINT16_MAX, n)) {
+                return false;
+            }
+            if (n == 0) {
+                error = "'track' must be at least 1";
+                return false;
+            }
+            out.track = static_cast<uint16_t>(n);
+        } else if (key == "progress") {
+            if (!value.is<JsonObjectConst>()) {
+                error = "'progress' must be an object";
+                return false;
+            }
+            sendspin::SourceMetadataProgress progress;
+            bool has_position = false;
+            for (const JsonPairConst inner : value.as<JsonObjectConst>()) {
+                const std::string inner_key(inner.key().c_str());
+                uint64_t v = 0;
+                if (inner_key != "track_progress" && inner_key != "track_duration" &&
+                    inner_key != "playback_speed") {
+                    error = "unknown key 'progress." + inner_key + "'";
+                    return false;
+                }
+                if (!number(inner.value(), ("progress." + inner_key).c_str(), UINT32_MAX, v)) {
+                    return false;
+                }
+                if (inner_key == "track_progress") {
+                    progress.track_progress_ms = static_cast<uint32_t>(v);
+                    has_position = true;
+                } else if (inner_key == "track_duration") {
+                    progress.track_duration_ms = static_cast<uint32_t>(v);
+                } else {
+                    progress.playback_speed = static_cast<uint32_t>(v);
+                }
+            }
+            if (!has_position) {
+                error = "'progress' needs 'track_progress'";
+                return false;
+            }
+            out.progress = progress;
+        } else {
+            error = "unknown key '" + key + "'";
+            return false;
+        }
+    }
+    return true;
 }
 
 bool split_control_line(const std::string& line, std::string& name,
@@ -432,7 +607,13 @@ bool split_control_line(const std::string& line, std::string& name,
         if (name.empty()) {
             name = std::move(word);
         } else {
-            args.push_back(std::move(word));
+            std::string decoded;
+            if (!percent_decode(word, decoded)) {
+                name.clear();
+                args.clear();
+                return false;
+            }
+            args.push_back(std::move(decoded));
         }
         position = end == std::string::npos ? line.size() : end;
     }
@@ -453,6 +634,9 @@ std::optional<SendspinControllerCommand> protocol_command(const ControlRequest& 
             return std::nullopt;
         case ControlCommand::Delay:
             // Set on the player role, which republishes client/state itself.
+            return std::nullopt;
+        case ControlCommand::InputMetadata:
+            // Set on the source role, which republishes client/state itself.
             return std::nullopt;
         case ControlCommand::Play:
             return SendspinControllerCommand::PLAY;

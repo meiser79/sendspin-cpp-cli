@@ -21,6 +21,7 @@
 
 #include <sendspin/config.h>
 #include <sendspin/controller_role.h>
+#include <sendspin/source_role.h>
 #include <sendspin/types.h>
 
 #ifndef SENDSPIN_ENABLE_CONTROLLER
@@ -42,8 +43,9 @@ inline constexpr const char* CONTROL_SOCKET_PREFIX = "sendspin-cli-";
 
 inline constexpr const char* CONTROL_SOCKET_SUFFIX = ".sock";
 
-/// Longest request line the daemon will assemble, in bytes.
-inline constexpr size_t MAX_CONTROL_LINE_BYTES = 256;
+/// Longest request line the daemon will assemble, in bytes: an `input-metadata` report at the
+/// spec's text caps, percent-encoded.
+inline constexpr size_t MAX_CONTROL_LINE_BYTES = 16384;
 
 inline constexpr size_t MAX_CONTROL_CONNECTIONS = 8;
 
@@ -79,8 +81,11 @@ enum class ControlCommand : uint8_t {
     Tui,  ///< runs in the terminal; the daemon refuses it
 
     /// Answered locally: this endpoint's own output delay.
-    /// Keep last: EveryCommandInTheEnumHasARow walks the enum up to here.
     Delay,
+
+    /// Answered locally: what the --input audio is, reported to the server.
+    /// Keep last: EveryCommandInTheEnumHasARow walks the enum up to here.
+    InputMetadata,
 };
 
 /// How a subcommand run ended; the value is its exit status.
@@ -124,7 +129,31 @@ struct ControlRequest {
     std::optional<sendspin::SendspinRepeatMode> repeat{};  ///< `repeat`
     std::optional<uint16_t> delay_ms{};                    ///< `delay`, 0 to MAX_OUTPUT_DELAY_MS
     std::optional<bool> confirm{};                         ///< `pair`: confirm, or cancel
+    /// `input-metadata`: the report as compact JSON, or empty to clear it.
+    std::optional<std::string> input_metadata{};
 };
+
+/// An `input-metadata` report: the fields of the spec's source metadata object.
+struct InputMetadata {
+    std::optional<std::string> title;
+    std::optional<std::string> artist;
+    std::optional<std::string> album_artist;
+    std::optional<std::string> album;
+    std::optional<std::string> artwork_url;
+    std::optional<uint16_t> year;
+    std::optional<uint16_t> track;
+    std::optional<sendspin::SourceMetadataProgress> progress;
+};
+
+/// Reads an `input-metadata` JSON object: only the spec's keys, each of its type.
+/// @return false with `error` set for anything else.
+bool parse_input_metadata(const std::string& json, InputMetadata& out, std::string& error);
+
+/// `text` with whitespace, control bytes and '%' as %XX, so it travels as one word.
+std::string percent_encode(const std::string& text);
+
+/// Undoes percent_encode(). @return false on a '%' not followed by two hex digits.
+bool percent_decode(const std::string& text, std::string& out);
 
 /// A subcommand and its arguments, split off the front of argv.
 struct ControlInvocation {
@@ -144,7 +173,8 @@ bool parse_control_request(const std::string& name, const std::vector<std::strin
 /// The request as one line, as parse_control_request() reads it back.
 std::string encode_control_request(const ControlRequest& request);
 
-/// Splits a request line on whitespace. @return false when the line holds no name.
+/// Splits a request line on whitespace and percent-decodes each argument.
+/// @return false when the line holds no name or an argument is not valid percent-encoding.
 bool split_control_line(const std::string& line, std::string& name, std::vector<std::string>& args);
 
 /// The controller command a request dispatches; nullopt for locally answered requests.

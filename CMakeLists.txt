@@ -36,8 +36,8 @@ endif()
 
 # sendspin-cpp
 
-# A fork commit that always reports the source signal (Sendspin/spec#335) until that is in a
-# sendspin-cpp release.
+# A fork commit with SourceRole::set_metadata() and an always-reported signal
+# (Sendspin/spec#335) until they are in a sendspin-cpp release.
 set(SENDSPIN_GIT_REPOSITORY "https://github.com/meiser79/sendspin-cpp.git" CACHE STRING
     "sendspin-cpp git repository to build against")
 set(SENDSPIN_GIT_TAG "69a4911394845604b37ece62387136d9ff3816bd" CACHE STRING

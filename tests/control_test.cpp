@@ -121,7 +121,7 @@ std::string field(const std::string& block, const std::string& key) {
 
 TEST(ControlSubcommands, EveryCommandInTheEnumHasARow) {
     // Walks the enum, not the table, so a command missing from the table fails.
-    for (uint8_t value = 0; value <= static_cast<uint8_t>(ControlCommand::Delay); ++value) {
+    for (uint8_t value = 0; value <= static_cast<uint8_t>(ControlCommand::InputMetadata); ++value) {
         const auto command = static_cast<ControlCommand>(value);
         bool found = false;
         for (const ControlSubcommand& subcommand : control_subcommands()) {
@@ -132,6 +132,93 @@ TEST(ControlSubcommands, EveryCommandInTheEnumHasARow) {
         }
         EXPECT_TRUE(found) << "no subcommand row for ControlCommand " << static_cast<int>(value);
     }
+}
+
+TEST(InputMetadata, EveryKeyOfTheSpecIsRead) {
+    InputMetadata out;
+    std::string error;
+    ASSERT_TRUE(parse_input_metadata(
+        R"({"title":"Blue in Green","artist":"Miles Davis","album_artist":"Miles Davis",)"
+        R"("album":"Kind of Blue","artwork_url":"http://x.test/a.jpg","year":1959,"track":3,)"
+        R"("progress":{"track_progress":1000,"track_duration":337000,"playback_speed":0}})",
+        out, error))
+        << error;
+    EXPECT_EQ(out.title, std::optional<std::string>("Blue in Green"));
+    EXPECT_EQ(out.album_artist, std::optional<std::string>("Miles Davis"));
+    EXPECT_EQ(out.artwork_url, std::optional<std::string>("http://x.test/a.jpg"));
+    EXPECT_EQ(out.year, std::optional<uint16_t>(1959));
+    EXPECT_EQ(out.track, std::optional<uint16_t>(3));
+    ASSERT_TRUE(out.progress.has_value());
+    EXPECT_EQ(out.progress->track_progress_ms, 1000U);
+    EXPECT_EQ(out.progress->track_duration_ms, 337000U);
+    EXPECT_EQ(out.progress->playback_speed, 0U);
+}
+
+TEST(InputMetadata, AnEmptyObjectIsNothingKnown) {
+    InputMetadata out;
+    std::string error;
+    ASSERT_TRUE(parse_input_metadata("{}", out, error)) << error;
+    EXPECT_FALSE(out.title.has_value());
+    EXPECT_FALSE(out.progress.has_value());
+}
+
+TEST(InputMetadata, WhatTheSpecDoesNotDefineIsRefused) {
+    for (const std::string bad :
+         {"", "[]", "\"title\"", R"({"name":"x"})", R"({"title":3})", R"({"year":-1})",
+          R"({"year":70000})", R"({"track":0})", R"({"track":1.5})", R"({"progress":3})",
+          R"({"progress":{}})", R"({"progress":{"track_progress":1,"speed":1}})",
+          R"({"progress":{"track_progress":-1}})"}) {
+        InputMetadata out;
+        std::string error;
+        EXPECT_FALSE(parse_input_metadata(bad, out, error)) << "accepted " << bad;
+        EXPECT_FALSE(error.empty()) << "no reason for " << bad;
+    }
+}
+
+TEST(InputMetadata, PercentEncodingKeepsAReportOneWord) {
+    const std::string text = "{\"title\":\"100% Pure\tLove\nAgain\"}";
+    const std::string encoded = percent_encode(text);
+    EXPECT_EQ(encoded.find_first_of(" \t\n"), std::string::npos);
+    std::string decoded;
+    ASSERT_TRUE(percent_decode(encoded, decoded));
+    EXPECT_EQ(decoded, text);
+
+    for (const std::string bad : {"%", "%4", "%G0", "a%zz"}) {
+        EXPECT_FALSE(percent_decode(bad, decoded)) << bad;
+    }
+}
+
+TEST(InputMetadata, ARequestSurvivesTheLine) {
+    ControlRequest request;
+    std::string error;
+    const std::string json = R"({"title":"So What","artist":"Miles Davis"})";
+    ASSERT_TRUE(parse_control_request("input-metadata", {json}, request, error)) << error;
+
+    std::string name;
+    std::vector<std::string> args;
+    ASSERT_TRUE(split_control_line(encode_control_request(request), name, args));
+    EXPECT_EQ(name, "input-metadata");
+    ASSERT_EQ(args.size(), 1U);
+    EXPECT_EQ(args[0], json);
+
+    ControlRequest daemon_side;
+    ASSERT_TRUE(parse_control_request(name, args, daemon_side, error)) << error;
+    EXPECT_EQ(daemon_side.input_metadata, std::optional<std::string>(json));
+    EXPECT_EQ(protocol_command(daemon_side), std::nullopt) << "answered locally";
+}
+
+TEST(InputMetadata, ClearTravelsAsClear) {
+    ControlRequest request;
+    std::string error;
+    ASSERT_TRUE(parse_control_request("input-metadata", {"clear"}, request, error)) << error;
+    EXPECT_EQ(request.input_metadata, std::optional<std::string>(""));
+    EXPECT_EQ(encode_control_request(request), "input-metadata clear");
+}
+
+TEST(InputMetadata, ABadPercentEscapeFailsTheLine) {
+    std::string name;
+    std::vector<std::string> args;
+    EXPECT_FALSE(split_control_line("input-metadata %ZZ", name, args));
 }
 
 TEST(ControlSubcommands, TuiIsARowThatTakesNoArgument) {
@@ -165,6 +252,8 @@ TEST(ControlSubcommands, EveryProtocolCommandIsReachable) {
             arguments = {{"on"}, {"off"}};
         } else if (std::string(subcommand.argument) == "confirm|cancel") {
             arguments = {{"confirm"}, {"cancel"}};
+        } else if (std::string(subcommand.argument) == "<json>|clear") {
+            arguments = {{"{}"}, {"clear"}};
         } else {
             arguments.push_back({"0"});
         }

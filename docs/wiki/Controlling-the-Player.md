@@ -61,11 +61,14 @@ is also what lets `seek-rel -5000` be an offset rather than a flag cluster.
 | `player-vol` | `<0-100>` | this player's **own** volume — **answered locally** |
 | `player-mute` | `on\|off` | mute or unmute this player alone — **answered locally** |
 | `delay` | `<0-5000>` | this endpoint's output delay — **answered locally** |
+| `input-metadata` | `<json>\|clear` | what the `--input` audio is, reported to the server — **answered locally** |
 
-Twelve of those go out to the server as `controller@v1` commands. Seven never leave the host:
+Twelve of those go out to the server as `controller@v1` commands. Eight never leave the host
+as commands:
 `status` and `status-kv`, formatted from the daemon's own view, `player-vol` and
 `player-mute`, which set this player's own level, `delay`, which drives this endpoint's own
-player role, `pair`, which is [Pairing a Player](Pairing-a-Player), and `pair-token`, which is
+player role, `input-metadata`, which goes out in this player's own source state (see
+[Describe what the input plays](Advanced-Usage#describe-what-the-input-plays)), `pair`, which is [Pairing a Player](Pairing-a-Player), and `pair-token`, which is
 [Pairing from another system](Advanced-Usage#pairing-from-another-system). `tui` sends
 nothing of its own: it is a screen that sends the others for you.
 
@@ -276,6 +279,9 @@ ok
 name: living-room
 ...
 ```
+
+An argument travels as one word: whitespace, control bytes and `%` in it are sent as `%XX`,
+which the player decodes. Only `input-metadata` ever needs it.
 
 The socket is polled from the main loop rather than from a thread, so a request round-trips
 in up to 10 ms. That is a deliberate trade — the library calls behind it are documented
