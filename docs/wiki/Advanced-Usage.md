@@ -79,6 +79,25 @@ Nothing is captured until the server starts the source, and the device is releas
 when the server stops it. Without `--input` the player does not offer the source role at
 all.
 
+### Start and stop on a signal
+
+`--signal-threshold <dBFS>` tells the server whether the input carries a signal, so it can start
+playing a turntable when the needle drops and stop again once the record ends:
+
+```bash
+sendspin-cli -n den --input hw:1,0 --signal-threshold -50
+```
+
+The signal counts as present after half a second above the level, and absent after five
+seconds below it. What the server does with that is its own setting; in Music Assistant it
+is the device's line-in autostart target. `-90` to `-1`: a less negative level needs a
+louder signal, which is what a noisy preamp wants. `sendspin-cli status` shows the state
+on the `input:` line. Without it the input is reported as having no signal, so a server
+only plays it when asked to.
+
+The device stays open the whole time instead of only while the server streams it, since
+the level can only be read from audio the card delivers.
+
 `sendspin-cli -l` lists capture devices in their own section, under the outputs: ALSA
 PCMs with the rates, formats and channel counts each takes, then the PulseAudio sources
 and PipeWire source nodes, or on macOS the CoreAudio input devices, then PortAudio's input

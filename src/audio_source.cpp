@@ -109,20 +109,96 @@ SourceCapture::SourceCapture(AudioSource& source, StreamFormat format, Writer wr
     : source_(source), format_(format), writer_(std::move(writer)) {}
 
 SourceCapture::~SourceCapture() {
-    this->on_streaming_stopped();
+    this->streaming_ = false;
+    this->forwarding_ = false;
+    this->stop_thread_();
+}
+
+namespace {
+
+constexpr int SIGNAL_PRESENT = 1;
+constexpr int SIGNAL_ABSENT = 2;
+
+std::optional<sendspin::SourceSignal> to_signal(int value) {
+    switch (value) {
+        case SIGNAL_PRESENT:
+            return sendspin::SourceSignal::PRESENT;
+        case SIGNAL_ABSENT:
+            return sendspin::SourceSignal::ABSENT;
+        default:
+            return std::nullopt;
+    }
+}
+
+}  // namespace
+
+void SourceCapture::enable_signal_detection(double threshold_dbfs) {
+    if (this->sensing_) {
+        return;
+    }
+    // Before the thread starts: from then on the detector is the capture thread's.
+    this->detector_.emplace(threshold_dbfs);
+    this->sensing_ = true;
+    log_line(LogLevel::INFO, LOG_TAG, "Sensing a signal on '%s' above %.0f dBFS",
+             this->source_.name().c_str(), threshold_dbfs);
+    this->start_thread_();
+}
+
+std::optional<sendspin::SourceSignal> SourceCapture::signal() const {
+    return to_signal(this->signal_.load());
+}
+
+std::optional<sendspin::SourceSignal> SourceCapture::take_signal_change() {
+    return to_signal(this->signal_change_.exchange(0));
+}
+
+void SourceCapture::publish_(std::optional<bool> change) {
+    if (!change.has_value()) {
+        return;
+    }
+    const int value = *change ? SIGNAL_PRESENT : SIGNAL_ABSENT;
+    this->signal_ = value;
+    this->signal_change_ = value;
+    log_line(LogLevel::INFO, LOG_TAG, "Signal %s on '%s'", *change ? "present" : "absent",
+             this->source_.name().c_str());
 }
 
 void SourceCapture::on_streaming_started() {
-    if (this->thread_.joinable()) {
+    if (this->streaming_) {
         return;
     }
     log_line(LogLevel::INFO, LOG_TAG, "Input stream opened: capturing from '%s'",
              this->source_.name().c_str());
+    this->streaming_ = true;
+    this->forwarding_ = true;
+    this->start_thread_();
+}
+
+void SourceCapture::on_streaming_stopped() {
+    if (!this->streaming_) {
+        return;
+    }
+    this->streaming_ = false;
+    this->forwarding_ = false;
+    if (this->sensing_) {
+        log_line(LogLevel::INFO, LOG_TAG, "Input stream closed: still sensing '%s'",
+                 this->source_.name().c_str());
+        return;
+    }
+    this->stop_thread_();
+    log_line(LogLevel::INFO, LOG_TAG, "Input stream closed: released '%s'",
+             this->source_.name().c_str());
+}
+
+void SourceCapture::start_thread_() {
+    if (this->thread_.joinable()) {
+        return;
+    }
     this->stopping_ = false;
     this->thread_ = std::thread([this] { this->run_(); });
 }
 
-void SourceCapture::on_streaming_stopped() {
+void SourceCapture::stop_thread_() {
     if (!this->thread_.joinable()) {
         return;
     }
@@ -132,8 +208,6 @@ void SourceCapture::on_streaming_stopped() {
     }
     this->stop_cv_.notify_all();
     this->thread_.join();
-    log_line(LogLevel::INFO, LOG_TAG, "Input stream closed: released '%s'",
-             this->source_.name().c_str());
 }
 
 bool SourceCapture::wait_(int64_t delay_ms) {
@@ -159,6 +233,9 @@ void SourceCapture::run_() {
         if (!open) {
             open = this->source_.open(this->format_);
             if (!open) {
+                if (this->detector_) {
+                    this->publish_(this->detector_->reset());
+                }
                 log_line(LogLevel::WARN, LOG_TAG,
                          "Input device '%s' is unavailable -- retrying in %lld ms",
                          this->source_.name().c_str(), static_cast<long long>(retry_ms));
@@ -179,6 +256,9 @@ void SourceCapture::run_() {
                      this->source_.name().c_str());
             this->source_.close();
             open = false;
+            if (this->detector_) {
+                this->publish_(this->detector_->reset());
+            }
             // Paced even when the reopen works, so a device that opens but cannot read never spins.
             if (!this->wait_(SINK_RESCAN_DELAY_MS)) {
                 break;
@@ -188,8 +268,18 @@ void SourceCapture::run_() {
         if (bytes == 0) {
             continue;
         }
-        // A refused write is the role's drop policy at work, not ours to retry.
-        this->writer_(buffer.data(), static_cast<size_t>(bytes), capture_time_us);
+        if (this->detector_) {
+            const auto frames_read = static_cast<uint64_t>(bytes) / bytes_per_frame;
+            const auto read_ms =
+                static_cast<uint32_t>(frames_read * 1000U / this->format_.sample_rate);
+            this->publish_(this->detector_->feed(
+                pcm_level_dbfs(buffer.data(), static_cast<size_t>(bytes), this->format_.bit_depth),
+                read_ms));
+        }
+        if (this->forwarding_) {
+            // A refused write is the role's drop policy at work, not ours to retry.
+            this->writer_(buffer.data(), static_cast<size_t>(bytes), capture_time_us);
+        }
 
         // An unclocked PCM such as ALSA's `null` never blocks; hold it near real time.
         window_frames += static_cast<size_t>(bytes) / bytes_per_frame;

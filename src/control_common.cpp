@@ -704,7 +704,8 @@ std::string format_status(const StatusSnapshot& snapshot) {
             snapshot.input + " (" + std::to_string(snapshot.input_format.sample_rate) + " Hz / " +
                 std::to_string(static_cast<unsigned>(snapshot.input_format.channels)) + " ch / " +
                 std::to_string(static_cast<unsigned>(snapshot.input_format.bit_depth)) + "-bit), " +
-                (snapshot.input_streaming ? "streaming" : "idle"));
+                (snapshot.input_streaming ? "streaming" : "idle") +
+                (snapshot.input_signal.empty() ? "" : ", signal " + snapshot.input_signal));
     }
 
     return out;

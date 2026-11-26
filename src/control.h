@@ -230,6 +230,8 @@ struct StatusSnapshot {
     std::string input;  ///< --input's device; empty when there is no source role
     StreamFormat input_format{};
     bool input_streaming{false};  ///< the server has the input stream open
+    /// With --signal-threshold: `present`, `absent`, or `unknown` until settled; empty without it.
+    std::string input_signal;
 };
 
 /// How `status` names a codec: `flac`, `opus`, `pcm` or `unsupported`.

@@ -20,10 +20,12 @@
 #include "log.h"
 #include "parse_harness.h"
 #include "scoped_env.h"
+#include "signal_detector.h"
 
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -590,6 +592,35 @@ TEST(ParseOptions, KeepOutputAliveRejectsBadValues) {
     for (const std::string& bad : {std::to_string(MAX_KEEP_OUTPUT_ALIVE_S + 1), std::string("-1"),
                                    std::string("10s"), std::string("true"), std::string("")}) {
         Parse parse({"--keep-output-alive", bad});
+        EXPECT_FALSE(parse.ok()) << "accepted '" << bad << "'";
+    }
+}
+
+TEST(ParseOptions, SignalThresholdIsOffUnlessAsked) {
+    Parse off({});
+    Parse on({"--input", "tone", "--signal-threshold", "-50"});
+
+    ASSERT_TRUE(off.ok()) << off.diagnostics();
+    ASSERT_TRUE(on.ok()) << on.diagnostics();
+    EXPECT_FALSE(off.options().signal_threshold_dbfs.has_value());
+    EXPECT_EQ(on.options().signal_threshold_dbfs, std::optional<int>(-50));
+}
+
+TEST(ParseOptions, SignalThresholdEdgesAreAccepted) {
+    Parse low({"--signal-threshold", std::to_string(MIN_SIGNAL_THRESHOLD_DBFS)});
+    Parse high({"--signal-threshold", std::to_string(MAX_SIGNAL_THRESHOLD_DBFS)});
+
+    ASSERT_TRUE(low.ok()) << low.diagnostics();
+    ASSERT_TRUE(high.ok()) << high.diagnostics();
+    EXPECT_EQ(low.options().signal_threshold_dbfs, std::optional<int>(MIN_SIGNAL_THRESHOLD_DBFS));
+    EXPECT_EQ(high.options().signal_threshold_dbfs, std::optional<int>(MAX_SIGNAL_THRESHOLD_DBFS));
+}
+
+TEST(ParseOptions, SignalThresholdRejectsBadValues) {
+    for (const std::string& bad : {std::to_string(MIN_SIGNAL_THRESHOLD_DBFS - 1), std::string("0"),
+                                   std::string("50"), std::string("-50.5"), std::string("-"),
+                                   std::string("--50"), std::string("-50dB"), std::string("")}) {
+        Parse parse({"--signal-threshold", bad});
         EXPECT_FALSE(parse.ok()) << "accepted '" << bad << "'";
     }
 }

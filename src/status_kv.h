@@ -66,6 +66,8 @@ struct PlayerView {
     std::string output;
     std::string input;
     bool input_streaming{false};
+    std::string
+        input_signal;  ///< `present`, `absent`, `unknown`, or empty without --signal-threshold
 };
 
 /// One `key=value` line per field, in a fixed order, `version=1` first. A \r or \n inside a

@@ -148,6 +148,7 @@ std::string format_status_kv(const StatusSnapshot& snapshot) {
     append_kv(out, "output", snapshot.output);
     append_kv(out, "input", snapshot.input);
     append_kv(out, "input_streaming", flag(snapshot.input_streaming));
+    append_kv(out, "input_signal", snapshot.input_signal);
     return out;
 }
 
@@ -213,6 +214,7 @@ bool parse_status_kv(const std::string& payload, PlayerView& out) {
         {"output", text(&PlayerView::output)},
         {"input", text(&PlayerView::input)},
         {"input_streaming", boolean(&PlayerView::input_streaming)},
+        {"input_signal", text(&PlayerView::input_signal)},
     };
 
     PlayerView view;

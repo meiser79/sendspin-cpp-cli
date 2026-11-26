@@ -17,10 +17,12 @@
 #pragma once
 
 #include "audio_sink.h"
+#include "signal_detector.h"
 
 #include <sendspin/source_role.h>
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -81,8 +83,9 @@ protected:
     AudioSource() = default;
 };
 
-/// Runs an AudioSource on one capture thread while the source role's input stream is open.
-/// Main loop only. Must be destroyed before the client its writer reaches.
+/// Runs an AudioSource on one capture thread while the source role's input stream is open, or
+/// all the time once line sensing is on. Main loop only. Must be destroyed before the client its
+/// writer reaches.
 class SourceCapture final : public sendspin::SourceRoleListener {
 public:
     /// SourceRole::write_audio(), or a stand-in; called from the capture thread only.
@@ -92,13 +95,26 @@ public:
     SourceCapture(AudioSource& source, StreamFormat format, Writer writer);
     ~SourceCapture() override;
 
+    /// Keeps the device open from now on and judges its level against `threshold_dbfs`.
+    void enable_signal_detection(double threshold_dbfs);
+
     void on_streaming_started() override;
-    /// Returns once the capture thread has joined.
+    /// Returns once the capture thread has joined, unless line sensing keeps it running.
     void on_streaming_stopped() override;
 
     bool streaming() const {
-        return this->thread_.joinable();
+        return this->streaming_;
     }
+
+    bool sensing() const {
+        return this->sensing_;
+    }
+
+    /// The signal state the capture thread last settled on, if it has settled on one.
+    std::optional<sendspin::SourceSignal> signal() const;
+
+    /// A signal change not yet taken, for SourceRole::set_signal(); the latest wins.
+    std::optional<sendspin::SourceSignal> take_signal_change();
 
     const StreamFormat& format() const {
         return this->format_;
@@ -113,10 +129,21 @@ private:
     /// Sleeps up to `delay_ms`, waking early on a stop.
     /// @return false if the thread should exit.
     bool wait_(int64_t delay_ms);
+    void start_thread_();
+    void stop_thread_();
+    /// Capture thread: publishes a change the detector reported.
+    void publish_(std::optional<bool> change);
 
     AudioSource& source_;
     StreamFormat format_;
     Writer writer_;
+
+    bool streaming_{false};
+    bool sensing_{false};
+    std::optional<SignalDetector> detector_;  ///< capture thread only once the thread runs
+    std::atomic<bool> forwarding_{false};     ///< whether reads go to the writer
+    std::atomic<int> signal_{0};              ///< 0 unknown, 1 present, 2 absent
+    std::atomic<int> signal_change_{0};       ///< as signal_, 0 when nothing is pending
 
     std::thread thread_;
     std::mutex stop_mutex_;

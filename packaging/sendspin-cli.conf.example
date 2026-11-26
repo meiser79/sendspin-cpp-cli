@@ -21,6 +21,10 @@
 # pulse or pipewire captures the sound server's default source; -l lists the named ones.
 #input = hw:1,0
 
+# Report a signal on the input above this level (-90 to -1 dBFS), so the server can start and
+# stop it on its own. Keeps the input device open the whole time.
+#signal-threshold = -50
+
 # Audio the output backend keeps buffered, 10-2000 ms. Raise it on a device that stutters.
 #buffer-ms = 100
 

@@ -502,6 +502,12 @@ private:
             snapshot.input = this->capture_->name();
             snapshot.input_format = this->capture_->format();
             snapshot.input_streaming = this->capture_->streaming();
+            if (this->capture_->sensing()) {
+                const std::optional<sendspin::SourceSignal> signal = this->capture_->signal();
+                snapshot.input_signal =
+                    !signal ? "unknown"
+                            : (*signal == sendspin::SourceSignal::PRESENT ? "present" : "absent");
+            }
         }
         return snapshot;
     }
@@ -733,6 +739,10 @@ int main(int argc, char* argv[]) {
         sink->set_keep_alive(opts.keep_output_alive_s);
     }
 
+    if (opts.signal_threshold_dbfs.has_value() && !opts.was_given(Opt::Input)) {
+        log_line(LogLevel::WARN, LOG_TAG_AUDIO, "--signal-threshold is ignored without --input");
+    }
+
     // Opened once here so a bad or busy --input stops the run before anything is advertised.
     std::unique_ptr<AudioSource> source;
     sendspin::SourceRoleConfig source_config;
@@ -870,6 +880,7 @@ int main(int argc, char* argv[]) {
 
     // After the client, so the capture thread is joined before the role it writes to is gone.
     std::unique_ptr<SourceCapture> capture;
+    sendspin::SourceRole* source_role_ptr = nullptr;
     if (source) {
         source_config.sample_rate = capture_format.sample_rate;
         source_config.channels = capture_format.channels;
@@ -881,6 +892,12 @@ int main(int argc, char* argv[]) {
                 return source_role.write_audio(data, len, capture_time_us);
             });
         source_role.set_listener(capture.get());
+        source_role_ptr = &source_role;
+        // Without it the library reports the signal absent, so a server never starts the input
+        // on its own.
+        if (opts.signal_threshold_dbfs.has_value()) {
+            capture->enable_signal_detection(static_cast<double>(*opts.signal_threshold_dbfs));
+        }
     }
 
     PlayerListener player_listener(player, *sink, &state_store);
@@ -1108,6 +1125,12 @@ int main(int argc, char* argv[]) {
         }
         // Main-loop work a sink cannot do on the sync task's thread.
         player_listener.poll(sendspin::SendspinClient::now_us());
+        // set_signal() is main loop only; the capture thread only records the change.
+        if (capture && source_role_ptr != nullptr) {
+            if (const auto signal = capture->take_signal_change()) {
+                source_role_ptr->set_signal(*signal);
+            }
+        }
         sink->poll(now_ms);
         hooks.poll();
         // Not in the SIGHUP handler: the reopen is not async-signal-safe.

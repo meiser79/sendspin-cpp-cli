@@ -58,6 +58,7 @@ StatusSnapshot full_snapshot() {
     snapshot.input = "hw:1,0";
     snapshot.input_format = {48000, 1, 16};
     snapshot.input_streaming = true;
+    snapshot.input_signal = "present";
     return snapshot;
 }
 
@@ -112,6 +113,7 @@ TEST(StatusKv, ARoundTripKeepsEveryField) {
     EXPECT_EQ(view.output, "portaudio");
     EXPECT_EQ(view.input, "hw:1,0");
     EXPECT_TRUE(view.input_streaming);
+    EXPECT_EQ(view.input_signal, "present");
 }
 
 TEST(StatusKv, UnknownValuesAreEmptyAndParseAsUnknown) {

@@ -741,6 +741,10 @@ TEST(FormatStatus, TheInputLineNamesTheDeviceItsFormatAndWhetherItStreams) {
     snapshot.input_streaming = true;
     EXPECT_EQ(field(format_status(snapshot), "input"),
               "hw:1,0 (48000 Hz / 1 ch / 16-bit), streaming");
+
+    snapshot.input_signal = "absent";
+    EXPECT_EQ(field(format_status(snapshot), "input"),
+              "hw:1,0 (48000 Hz / 1 ch / 16-bit), streaming, signal absent");
 }
 
 TEST(FormatStatus, EveryFieldIsPresentAndLabelled) {

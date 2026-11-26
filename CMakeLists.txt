@@ -36,7 +36,11 @@ endif()
 
 # sendspin-cpp
 
-set(SENDSPIN_GIT_TAG "v0.10.0" CACHE STRING
+# A fork commit that always reports the source signal (Sendspin/spec#335) until that is in a
+# sendspin-cpp release.
+set(SENDSPIN_GIT_REPOSITORY "https://github.com/meiser79/sendspin-cpp.git" CACHE STRING
+    "sendspin-cpp git repository to build against")
+set(SENDSPIN_GIT_TAG "69a4911394845604b37ece62387136d9ff3816bd" CACHE STRING
     "sendspin-cpp git tag or commit to build against")
 
 # player, metadata, controller (group transport verbs) and source; no FORCE, so -D overrides still win.
@@ -57,7 +61,7 @@ set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "Install IXWebSocket alongside our own ta
 include(FetchContent)
 FetchContent_Declare(
     sendspin
-    GIT_REPOSITORY https://github.com/Sendspin/sendspin-cpp.git
+    GIT_REPOSITORY ${SENDSPIN_GIT_REPOSITORY}
     # No GIT_SHALLOW: an overriding commit SHA that is not a branch tip will not shallow-fetch.
     GIT_TAG        ${SENDSPIN_GIT_TAG}
 )
@@ -303,6 +307,7 @@ add_library(sendspin-cli-core STATIC
     src/cli.cpp
     src/audio_sink.cpp
     src/audio_source.cpp
+    src/signal_detector.cpp
     src/control_client.cpp
     src/control_common.cpp
     src/control_socket.cpp
@@ -538,6 +543,7 @@ if(SENDSPIN_CLI_BUILD_TESTS)
         tests/device_spec_test.cpp
         tests/discovery_test.cpp
         tests/hooks_test.cpp
+        tests/signal_detector_test.cpp
         tests/null_sink_test.cpp
         tests/pairing_endpoint_test.cpp
         tests/pairing_listener_test.cpp

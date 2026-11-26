@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -580,6 +581,76 @@ TEST(SourceCapture, DestructionJoinsARunningThread) {
     const size_t at_destruction = recorder.writes();
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
     EXPECT_EQ(recorder.writes(), at_destruction);
+}
+
+TEST(SourceCapture, SignalDetectionCapturesWithoutForwardingWhileIdle) {
+    NullAudioSource source(NullSourceSignal::Tone);
+    RecordingWriter recorder;
+    SourceCapture capture(source, STEREO_16, recorder.writer());
+
+    capture.enable_signal_detection(-50.0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+
+    EXPECT_TRUE(capture.sensing());
+    EXPECT_FALSE(capture.streaming());
+    EXPECT_EQ(recorder.writes(), 0U);
+}
+
+TEST(SourceCapture, SignalDetectionReportsAToneAsPresentOnce) {
+    NullAudioSource source(NullSourceSignal::Tone);
+    RecordingWriter recorder;
+    SourceCapture capture(source, STEREO_16, recorder.writer());
+
+    capture.enable_signal_detection(-50.0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    std::optional<sendspin::SourceSignal> change;
+    while (!change && std::chrono::steady_clock::now() < deadline) {
+        change = capture.take_signal_change();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    EXPECT_EQ(change, std::optional<sendspin::SourceSignal>(sendspin::SourceSignal::PRESENT));
+    EXPECT_EQ(capture.signal(),
+              std::optional<sendspin::SourceSignal>(sendspin::SourceSignal::PRESENT));
+    EXPECT_EQ(capture.take_signal_change(), std::nullopt);
+}
+
+TEST(SourceCapture, SignalDetectionReportsSilenceAsAbsent) {
+    NullAudioSource source(NullSourceSignal::Silence);
+    RecordingWriter recorder;
+    SourceCapture capture(source, STEREO_16, recorder.writer());
+
+    capture.enable_signal_detection(-50.0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!capture.signal() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    EXPECT_EQ(capture.signal(),
+              std::optional<sendspin::SourceSignal>(sendspin::SourceSignal::ABSENT));
+}
+
+TEST(SourceCapture, SignalDetectionKeepsCapturingAcrossAStreamStop) {
+    NullAudioSource source(NullSourceSignal::Tone);
+    RecordingWriter recorder;
+    SourceCapture capture(source, STEREO_16, recorder.writer());
+    capture.enable_signal_detection(-50.0);
+
+    capture.on_streaming_started();
+    EXPECT_TRUE(capture.streaming());
+    ASSERT_TRUE(recorder.wait_for(3));
+    capture.on_streaming_stopped();
+    EXPECT_FALSE(capture.streaming());
+    EXPECT_TRUE(capture.sensing());
+
+    // Writes stop at the stream stop, though the thread runs on.
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    const size_t after_stop = recorder.writes();
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    EXPECT_EQ(recorder.writes(), after_stop);
+
+    capture.on_streaming_started();
+    ASSERT_TRUE(recorder.wait_for(after_stop + 1));
 }
 
 TEST(SourceCapture, AnUnclockedDeviceIsHeldNearRealTime) {

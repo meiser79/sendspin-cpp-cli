@@ -207,6 +207,7 @@ scaling the stream in software, see `--alsa-mixer` in
 ```bash
 sendspin-cli -n den --input default      # a microphone or line-in
 sendspin-cli -n den --input loopback     # what this host plays
+sendspin-cli -n den --input hw:1,0 --signal-threshold -50   # tell the server when a record plays
 ```
 
 Off unless given. `-l` lists capture devices too. See

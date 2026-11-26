@@ -29,6 +29,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -377,6 +378,17 @@ TEST(ConfigPrecedence, ReleaseDeviceIsSettableAndOffByDefault) {
     EXPECT_TRUE(enabled.options().release_device);
     EXPECT_FALSE(disabled.options().release_device);
     EXPECT_FALSE(defaulted.options().release_device);
+}
+
+TEST(ConfigPrecedence, SignalThresholdIsSettable) {
+    ScratchDir scratch;
+    ASSERT_TRUE(scratch.created());
+    const std::string on = scratch.write("on", "signal-threshold = -45\n");
+
+    Parse parse({}, on);
+
+    ASSERT_TRUE(parse.ok()) << parse.diagnostics();
+    EXPECT_EQ(parse.options().signal_threshold_dbfs, std::optional<int>(-45));
 }
 
 TEST(ConfigPrecedence, KeepOutputAliveIsSettableAndOffByDefault) {

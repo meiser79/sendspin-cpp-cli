@@ -21,6 +21,7 @@
 #include "log.h"
 #include "mdns.h"
 #include "pairing_endpoint.h"
+#include "signal_detector.h"
 #include "supported_formats.h"
 
 #ifdef _WIN32
@@ -85,6 +86,7 @@ enum LongOnly {
     OPT_RELEASE_DEVICE,
     OPT_PAIRING_TOKEN_ENDPOINT,
     OPT_KEEP_OUTPUT_ALIVE,
+    OPT_SIGNAL_THRESHOLD,
 };
 
 /// An option a config file may set: its key (the long flag name) and how diagnostics name it.
@@ -101,6 +103,7 @@ const std::vector<SettableOption>& settable_options() {
     static const std::vector<SettableOption> table = {
         {Opt::Device, "output", "-o"},
         {Opt::Input, "input", "--input"},
+        {Opt::SignalThreshold, "signal-threshold", "--signal-threshold"},
         {Opt::Name, "name", "-n"},
         {Opt::Server, "server", "-s"},
         {Opt::Pidfile, "pidfile", "-P"},
@@ -223,6 +226,23 @@ bool parse_keep_output_alive(const std::string& str, uint32_t& seconds) {
         return false;
     }
     seconds = static_cast<uint32_t>(value);
+    return true;
+}
+
+/// Parses --signal-threshold dBFS: an optional '-' and digits, MIN_SIGNAL_THRESHOLD_DBFS to
+/// MAX_SIGNAL_THRESHOLD_DBFS.
+bool parse_signal_threshold(const std::string& str, int& dbfs) {
+    const bool negative = !str.empty() && str[0] == '-';
+    const std::string digits = negative ? str.substr(1) : str;
+    if (!is_all_digits(digits) || digits.size() > 3) {
+        return false;
+    }
+    const long magnitude = std::strtol(digits.c_str(), nullptr, 10);
+    const long value = negative ? -magnitude : magnitude;
+    if (value < MIN_SIGNAL_THRESHOLD_DBFS || value > MAX_SIGNAL_THRESHOLD_DBFS) {
+        return false;
+    }
+    dbfs = static_cast<int>(value);
     return true;
 }
 
@@ -466,6 +486,17 @@ bool apply_option(const SettableOption& option, const std::string& value, Option
                 return false;
             }
             break;
+        case Opt::SignalThreshold: {
+            int dbfs = 0;
+            if (!parse_signal_threshold(value, dbfs)) {
+                error = "invalid --signal-threshold '" + value + "' -- expected " +
+                        std::to_string(MIN_SIGNAL_THRESHOLD_DBFS) + " to " +
+                        std::to_string(MAX_SIGNAL_THRESHOLD_DBFS) + " dBFS";
+                return false;
+            }
+            out.signal_threshold_dbfs = dbfs;
+            break;
+        }
         case Opt::KeepAlive:
             if (!parse_keep_output_alive(value, out.keep_output_alive_s)) {
                 error = "invalid --keep-output-alive '" + value + "' -- expected 0-" +
@@ -664,6 +695,7 @@ bool parse_options(int argc, char* argv[], Options& out, std::FILE* err) {
         {"release-device", no_argument, nullptr, OPT_RELEASE_DEVICE},
         {"pairing-token-endpoint", required_argument, nullptr, OPT_PAIRING_TOKEN_ENDPOINT},
         {"keep-output-alive", required_argument, nullptr, OPT_KEEP_OUTPUT_ALIVE},
+        {"signal-threshold", required_argument, nullptr, OPT_SIGNAL_THRESHOLD},
         {nullptr, 0, nullptr, 0},
     };
 
@@ -836,6 +868,9 @@ bool parse_options(int argc, char* argv[], Options& out, std::FILE* err) {
             case OPT_INPUT:
                 apply(Opt::Input, optarg);
                 break;
+            case OPT_SIGNAL_THRESHOLD:
+                apply(Opt::SignalThreshold, optarg);
+                break;
             case ':':
                 fail("option '" + offending_option(flag_argv, optind) + "' needs a value");
                 break;
@@ -978,13 +1013,13 @@ bool parse_options(int argc, char* argv[], Options& out, std::FILE* err) {
     // A subcommand starts no player: warn that daemon-only flags do nothing.
     if (!out.subcommand.empty()) {
         static constexpr Opt DAEMON_ONLY[] = {
-            Opt::Device,         Opt::Name,          Opt::Server,      Opt::Daemonize,
-            Opt::Pidfile,        Opt::Logfile,       Opt::LogLevel,    Opt::BufferMs,
-            Opt::NoMdns,         Opt::MdnsName,      Opt::NoControl,   Opt::StateDir,
-            Opt::OutputDelay,    Opt::HookStart,     Opt::HookStop,    Opt::ClientId,
-            Opt::Manufacturer,   Opt::ProductName,   Opt::AudioFormat, Opt::AllowUnpaired,
-            Opt::Input,          Opt::PairingCode,   Opt::FixedVolume, Opt::AlsaMixer,
-            Opt::AlsaMixerCurve, Opt::ReleaseDevice,
+            Opt::Device,         Opt::Name,          Opt::Server,          Opt::Daemonize,
+            Opt::Pidfile,        Opt::Logfile,       Opt::LogLevel,        Opt::BufferMs,
+            Opt::NoMdns,         Opt::MdnsName,      Opt::NoControl,       Opt::StateDir,
+            Opt::OutputDelay,    Opt::HookStart,     Opt::HookStop,        Opt::ClientId,
+            Opt::Manufacturer,   Opt::ProductName,   Opt::AudioFormat,     Opt::AllowUnpaired,
+            Opt::Input,          Opt::PairingCode,   Opt::FixedVolume,     Opt::AlsaMixer,
+            Opt::AlsaMixerCurve, Opt::ReleaseDevice, Opt::SignalThreshold,
         };
         for (Opt opt : DAEMON_ONLY) {
             if (out.was_given(opt)) {
@@ -1097,6 +1132,14 @@ void print_usage(std::FILE* out, const char* prog) {
 #else
     std::fprintf(out, "                Without --input nothing is captured\n");
 #endif
+    std::fprintf(out, "  --signal-threshold <dBFS>\n");
+    std::fprintf(out, "                Tell the server whether --input carries a signal, so it\n");
+    std::fprintf(out, "                can start and stop playing it on its own: present after\n");
+    std::fprintf(out, "                %u ms above <dBFS>, absent after %u s below it. %d to\n",
+                 SIGNAL_ATTACK_MS, SIGNAL_RELEASE_MS / 1000U, MIN_SIGNAL_THRESHOLD_DBFS);
+    std::fprintf(out, "                %d, e.g. -50. Keeps the input device open the whole\n",
+                 MAX_SIGNAL_THRESHOLD_DBFS);
+    std::fprintf(out, "                time, not only while streaming. Needs --input\n");
     std::fprintf(out, "  -l            List output and input devices with their capabilities,\n");
     std::fprintf(out, "                and exit\n");
     std::fprintf(out, "  -n, --name <name>\n");
