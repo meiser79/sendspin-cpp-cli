@@ -36,11 +36,11 @@ endif()
 
 # sendspin-cpp
 
-# A fork commit that always reports the source signal (Sendspin/spec#335) until that is in a
-# sendspin-cpp release.
+# The fork commit of Sendspin/sendspin-cpp#287, which always reports the source signal
+# (Sendspin/spec#335), until that is in a sendspin-cpp release.
 set(SENDSPIN_GIT_REPOSITORY "https://github.com/meiser79/sendspin-cpp.git" CACHE STRING
     "sendspin-cpp git repository to build against")
-set(SENDSPIN_GIT_TAG "69a4911394845604b37ece62387136d9ff3816bd" CACHE STRING
+set(SENDSPIN_GIT_TAG "96e002da70810feeb1d6243e80c82b3bf233b2fa" CACHE STRING
     "sendspin-cpp git tag or commit to build against")
 
 # player, metadata, controller (group transport verbs) and source; no FORCE, so -D overrides still win.
